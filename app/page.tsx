@@ -56,8 +56,17 @@ function MainApp() {
   const [showDebug, setShowDebug] = useState(false)
   const [isClientSide, setIsClientSide] = useState(false)
   
+  // FIXED: Use useRef to track conversation state to avoid closure issues
+  const isConversationActive = useRef(false)
+  
   // Initialize audio elements only on client side to avoid SSR issues
   const audioElements = useRef<{ [key: string]: HTMLAudioElement }>({})
+
+  // FIXED: Sync ref with actual state
+  useEffect(() => {
+    isConversationActive.current = state.isActive
+    log(`🔄 State sync: isActive = ${state.isActive}, ref = ${isConversationActive.current}`)
+  }, [state.isActive])
 
   // Initialize client-side only components
   useEffect(() => {
@@ -243,17 +252,19 @@ function MainApp() {
     message: string,
     isFirstMessage = false
   ): Promise<void> => {
-    log(`🎬 Processing turn for ${currentAi}, first: ${isFirstMessage}`)
+    log(`🎬 Processing turn for ${currentAi}, first: ${isFirstMessage}, isConversationActive: ${isConversationActive.current}`)
     
-    if (!state.isActive) {
-      log(`❌ Conversation not active, stopping turn for ${currentAi}`)
+    // FIXED: Use ref instead of state to avoid closure issues
+    if (!isConversationActive.current) {
+      log(`❌ Conversation not active (ref), stopping turn for ${currentAi}`)
       return
     }
 
     try {
       await addThinkingDelay(currentAi)
       
-      if (!state.isActive) {
+      // Check again after thinking delay
+      if (!isConversationActive.current) {
         log(`❌ Conversation stopped during thinking for ${currentAi}`)
         setTypingIndicator(currentAi, false)
         return
@@ -266,6 +277,7 @@ function MainApp() {
       if (response && response.includes('#END#')) {
         log(`🔚 ${currentAi} responded with #END#. Ending conversation.`)
         setTypingIndicator(currentAi, false)
+        isConversationActive.current = false
         stopConversation('Conversation has ended')
         return
       }
@@ -288,7 +300,7 @@ function MainApp() {
       // Speak the response
       await speakText(currentAi, response, messageIndex)
 
-      if (!state.isActive) {
+      if (!isConversationActive.current) {
         log(`❌ Conversation stopped after speech for ${currentAi}`)
         return
       }
@@ -303,6 +315,7 @@ function MainApp() {
       if ((direction === 'human-to-ai1' && currentAi === 'ai1') ||
           (direction === 'human-to-ai2' && currentAi === 'ai2')) {
         log(`✅ Conversation completed for direction: ${direction}`)
+        isConversationActive.current = false
         stopConversation('Conversation ended')
         return
       }
@@ -316,14 +329,13 @@ function MainApp() {
       log(`❌ Error in processTurn for ${currentAi}: ${error}`)
       setTypingIndicator(currentAi, false)
       setSpeakingState(currentAi, false)
+      isConversationActive.current = false
       
-      if (state.isActive) {
-        addMessage({
-          role: 'system',
-          content: `An error occurred: ${error}. Stopping conversation.`,
-        })
-        stopConversation('Conversation stopped due to error')
-      }
+      addMessage({
+        role: 'system',
+        content: `An error occurred: ${error}. Stopping conversation.`,
+      })
+      stopConversation('Conversation stopped due to error')
     }
   }
 
@@ -339,7 +351,9 @@ function MainApp() {
       ai1Model: ai1Config.model,
       ai2Model: ai2Config.model,
       ai1Name: ai1Config.name,
-      ai2Name: ai2Config.name
+      ai2Name: ai2Config.name,
+      currentlyActive: state.isActive,
+      refActive: isConversationActive.current
     })
 
     // Enhanced validation with detailed logging
@@ -356,7 +370,7 @@ function MainApp() {
       return
     }
 
-    if (state.isActive) {
+    if (state.isActive || isConversationActive.current) {
       log(`❌ Validation failed: Conversation already active`)
       alert('Conversation is already active.')
       return
@@ -364,6 +378,10 @@ function MainApp() {
 
     try {
       log('🎬 Initializing conversation')
+      
+      // FIXED: Set ref state immediately to prevent any race conditions
+      isConversationActive.current = true
+      
       clearMessages()
       startConversation()
       setConversationId(generateId())
@@ -396,11 +414,14 @@ function MainApp() {
         model: sender === 'ai1' ? ai1Config.model : sender === 'ai2' ? ai2Config.model : undefined,
       })
 
-      log(`🎯 Starting conversation flow with ${receiver}`)
+      log(`🎯 Starting conversation flow with ${receiver}, isConversationActive.current: ${isConversationActive.current}`)
+      
+      // FIXED: Start immediately since we control state with ref
       await processTurn(receiver, message, true)
       
     } catch (error) {
       log(`❌ Error starting conversation: ${error}`)
+      isConversationActive.current = false
       addMessage({
         role: 'system',
         content: `Failed to start conversation: ${error}`,
