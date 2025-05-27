@@ -11,6 +11,7 @@ import { AIAgent, ConversationDirection, OpenRouterResponse } from '@/types'
 import { generateId, calculateSpeakingTime, debugLog } from '@/lib/utils'
 import { toast } from 'sonner'
 
+// FIXED: Enable TTS by default for both agents for testing
 const DEFAULT_AI1_CONFIG: AIAgent = {
   id: 'ai1',
   name: 'AI-1',
@@ -19,7 +20,7 @@ const DEFAULT_AI1_CONFIG: AIAgent = {
   maxTokens: 1200,
   temperature: 0.5,
   tts: {
-    enabled: false,
+    enabled: true, // ENABLED by default
     voice: 'Arista-PlayAI',
   },
 }
@@ -32,7 +33,7 @@ const DEFAULT_AI2_CONFIG: AIAgent = {
   maxTokens: 1200,
   temperature: 0.5,
   tts: {
-    enabled: false,
+    enabled: true, // ENABLED by default
     voice: 'Angelo-PlayAI',
   },
 }
@@ -142,23 +143,37 @@ function MainApp() {
     }
   }
 
-  // FIXED: Enhanced speakText function that handles all cases
+  // ENHANCED: Better logging and error handling for TTS
   const speakText = async (aiId: 'ai1' | 'ai2', text: string, messageIndex: number) => {
+    log(`🎵 speakText called for ${aiId}, messageIndex: ${messageIndex}`)
+    
     if (!isClientSide || !audioElements.current[aiId]) {
-      log(`Audio not available for ${aiId}, skipping TTS`)
+      log(`❌ Audio not available for ${aiId}, skipping TTS`)
       return
     }
 
     const config = aiId === 'ai1' ? ai1Config : ai2Config
     
+    log(`🔍 TTS Config for ${aiId}: enabled=${config.tts.enabled}, voice=${config.tts.voice}`)
+    
     if (!config.tts.enabled) {
-      log(`TTS disabled for ${aiId}, skipping speech`)
+      log(`❌ TTS disabled for ${aiId}, skipping speech`)
       return
     }
 
     try {
-      log(`🎵 Starting TTS for ${aiId}: ${text.substring(0, 50)}...`)
+      log(`🎵 Starting TTS request for ${aiId}: "${text.substring(0, 50)}..."`)
       setSpeakingState(aiId, true)
+      
+      const ttsRequest = {
+        voice: config.tts.voice,
+        input: text,
+        conversation_id: conversationId,
+        message_index: messageIndex,
+        agent: aiId,
+      }
+      
+      log(`📤 TTS Request:`, ttsRequest)
       
       const response = await fetch('/api/groq/tts', {
         method: 'POST',
@@ -166,22 +181,22 @@ function MainApp() {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({
-          voice: config.tts.voice,
-          input: text,
-          conversation_id: conversationId,
-          message_index: messageIndex,
-          agent: aiId,
-        }),
+        body: JSON.stringify(ttsRequest),
       })
 
+      log(`📥 TTS Response: ${response.status} ${response.statusText}`)
+
       if (!response.ok) {
-        throw new Error(`TTS API error: ${response.status}`)
+        const errorText = await response.text()
+        log(`❌ TTS API Error: ${response.status} - ${errorText}`)
+        throw new Error(`TTS API error: ${response.status} - ${errorText}`)
       }
 
       const audioBlob = await response.blob()
       const audioUrl = URL.createObjectURL(audioBlob)
       const audioElement = audioElements.current[aiId]
+
+      log(`🎵 Playing TTS audio for ${aiId}, blob size: ${audioBlob.size} bytes`)
 
       return new Promise<void>((resolve) => {
         const speakingTime = calculateSpeakingTime(text)
@@ -191,14 +206,14 @@ function MainApp() {
           setSpeakingState(aiId, false)
           URL.revokeObjectURL(audioUrl)
           setHasAudio(true)
-          log(`🔊 TTS completed for ${aiId}`)
+          log(`✅ TTS completed for ${aiId}`)
           resolve()
         }
         
-        audioElement.onerror = () => {
+        audioElement.onerror = (error) => {
           setSpeakingState(aiId, false)
           URL.revokeObjectURL(audioUrl)
-          log(`❌ TTS audio error for ${aiId}`)
+          log(`❌ TTS audio error for ${aiId}:`, error)
           setTimeout(resolve, speakingTime)
         }
 
@@ -213,14 +228,16 @@ function MainApp() {
           }
         }, speakingTime + 500)
 
-        audioElement.play().catch(() => {
+        audioElement.play().then(() => {
+          log(`🔊 Audio started playing for ${aiId}`)
+        }).catch((playError) => {
           setSpeakingState(aiId, false)
-          log(`❌ TTS play failed for ${aiId}`)
+          log(`❌ TTS play failed for ${aiId}:`, playError)
           setTimeout(resolve, 1000)
         })
       })
     } catch (error) {
-      log(`❌ Error in speakText for ${aiId}: ${error}`)
+      log(`❌ Error in speakText for ${aiId}:`, error)
       setSpeakingState(aiId, false)
       return new Promise(resolve => setTimeout(resolve, 1000))
     }
@@ -233,7 +250,7 @@ function MainApp() {
     await new Promise(resolve => setTimeout(resolve, thinkingTime))
   }
 
-  // FIXED: Better processTurn that handles TTS for both agents
+  // ENHANCED: Better logging for processTurn
   const processTurn = async (
     currentAi: 'ai1' | 'ai2',
     message: string,
@@ -285,8 +302,10 @@ function MainApp() {
         model: currentAi === 'ai1' ? ai1Config.model : ai2Config.model,
       })
 
-      // FIXED: Always speak the AI response if TTS is enabled
+      // CRITICAL: Always try TTS for the current AI
+      log(`🎵 About to call speakText for ${currentAi} with messageIndex ${messageIndex}`)
       await speakText(currentAi, response, messageIndex)
+      log(`✅ speakText completed for ${currentAi}`)
 
       if (!isConversationActive.current) {
         log(`❌ Conversation stopped after speech for ${currentAi}`)
@@ -332,7 +351,7 @@ function MainApp() {
     return 'ai1-to-ai2'
   }
 
-  // FIXED: Enhanced handleStartConversation with proper TTS for initial message
+  // ENHANCED: Better logging for handleStartConversation
   const handleStartConversation = async (direction: ConversationDirection, message: string) => {
     log('🚀 STARTING CONVERSATION', {
       direction,
@@ -341,6 +360,8 @@ function MainApp() {
       ai2Model: ai2Config.model,
       ai1Name: ai1Config.name,
       ai2Name: ai2Config.name,
+      ai1TtsEnabled: ai1Config.tts.enabled,
+      ai2TtsEnabled: ai2Config.tts.enabled,
       currentlyActive: state.isActive,
       refActive: isConversationActive.current
     })
