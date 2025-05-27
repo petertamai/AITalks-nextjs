@@ -54,19 +54,32 @@ function MainApp() {
   const [hasAudio, setHasAudio] = useState(false)
   const [debugLogs, setDebugLogs] = useState<string[]>([])
   const [showDebug, setShowDebug] = useState(false)
+  const [isClientSide, setIsClientSide] = useState(false)
   
-  const audioElements = useRef<{ [key: string]: HTMLAudioElement }>({
-    ai1: new Audio(),
-    ai2: new Audio(),
-  })
+  // Initialize audio elements only on client side to avoid SSR issues
+  const audioElements = useRef<{ [key: string]: HTMLAudioElement }>({})
 
+  // Initialize client-side only components
   useEffect(() => {
+    setIsClientSide(true)
     setConversationId(generateId())
+    
+    // Initialize audio elements only in browser
+    if (typeof window !== 'undefined') {
+      audioElements.current = {
+        ai1: new Audio(),
+        ai2: new Audio(),
+      }
+      console.log('🔊 Audio elements initialized on client side')
+    }
   }, [])
 
   const log = (message: string, data?: any) => {
     debugLog(message, data)
-    setDebugLogs(prev => [...prev.slice(-19), `[${new Date().toLocaleTimeString()}] ${message}`])
+    const timestamp = new Date().toLocaleTimeString()
+    const logEntry = `[${timestamp}] ${message}`
+    console.log(logEntry, data || '')
+    setDebugLogs(prev => [...prev.slice(-19), logEntry])
   }
 
   const getAIResponse = async (
@@ -76,6 +89,8 @@ function MainApp() {
   ) => {
     const config = aiId === 'ai1' ? ai1Config : ai2Config
     const otherConfig = aiId === 'ai1' ? ai2Config : ai1Config
+    
+    log(`🤖 Getting ${aiId} response using model: ${config.model}`)
     
     const messages = [
       {
@@ -90,12 +105,19 @@ function MainApp() {
       }
     ]
 
+    log(`📤 Sending request to OpenRouter API for ${aiId}`, {
+      model: config.model,
+      messageCount: messages.length,
+      maxTokens: config.maxTokens,
+      temperature: config.temperature
+    })
+
     const response = await fetch('/api/openrouter/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      credentials: 'include', // This ensures cookies are sent
+      credentials: 'include',
       body: JSON.stringify({
         model: config.model,
         messages,
@@ -104,20 +126,34 @@ function MainApp() {
       }),
     })
 
+    log(`📥 OpenRouter API response: ${response.status} ${response.statusText}`)
+
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`)
+      const errorText = await response.text()
+      log(`❌ API Error Details: ${errorText}`)
+      throw new Error(`API error: ${response.status} - ${errorText}`)
     }
 
     const data: OpenRouterResponse = await response.json()
+    log(`📊 API Response data:`, data)
     
     if (data.choices && data.choices.length > 0 && data.choices[0].message) {
-      return data.choices[0].message.content.trim()
+      const content = data.choices[0].message.content.trim()
+      log(`✅ Got response from ${aiId}: ${content.substring(0, 100)}...`)
+      return content
     } else {
+      log(`❌ Invalid response format:`, data)
       throw new Error('Invalid response format from API')
     }
   }
 
   const speakText = async (aiId: 'ai1' | 'ai2', text: string, messageIndex: number) => {
+    // Check if we're on client side and audio elements are initialized
+    if (!isClientSide || !audioElements.current[aiId]) {
+      log(`Audio not available for ${aiId}, skipping TTS`)
+      return
+    }
+
     const config = aiId === 'ai1' ? ai1Config : ai2Config
     
     if (!config.tts.enabled) {
@@ -126,6 +162,7 @@ function MainApp() {
     }
 
     try {
+      log(`🎵 Starting TTS for ${aiId}: ${text.substring(0, 50)}...`)
       setSpeakingState(aiId, true)
       
       const response = await fetch('/api/groq/tts', {
@@ -133,7 +170,7 @@ function MainApp() {
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include', // This ensures cookies are sent
+        credentials: 'include',
         body: JSON.stringify({
           voice: config.tts.voice,
           input: text,
@@ -159,12 +196,14 @@ function MainApp() {
           setSpeakingState(aiId, false)
           URL.revokeObjectURL(audioUrl)
           setHasAudio(true)
+          log(`🔊 TTS completed for ${aiId}`)
           resolve()
         }
         
         audioElement.onerror = () => {
           setSpeakingState(aiId, false)
           URL.revokeObjectURL(audioUrl)
+          log(`❌ TTS audio error for ${aiId}`)
           setTimeout(resolve, speakingTime)
         }
 
@@ -174,23 +213,26 @@ function MainApp() {
             audioElement.pause()
             setSpeakingState(aiId, false)
             URL.revokeObjectURL(audioUrl)
+            log(`⏰ TTS timeout for ${aiId}`)
             resolve()
           }
         }, speakingTime + 500)
 
         audioElement.play().catch(() => {
           setSpeakingState(aiId, false)
+          log(`❌ TTS play failed for ${aiId}`)
           setTimeout(resolve, 1000)
         })
       })
     } catch (error) {
-      log(`Error in speakText: ${error}`)
+      log(`❌ Error in speakText for ${aiId}: ${error}`)
       setSpeakingState(aiId, false)
       return new Promise(resolve => setTimeout(resolve, 1000))
     }
   }
 
   const addThinkingDelay = async (aiId: 'ai1' | 'ai2') => {
+    log(`💭 ${aiId} is thinking...`)
     setTypingIndicator(aiId, true)
     const thinkingTime = 1000 + Math.random() * 2000
     await new Promise(resolve => setTimeout(resolve, thinkingTime))
@@ -201,21 +243,28 @@ function MainApp() {
     message: string,
     isFirstMessage = false
   ): Promise<void> => {
-    if (!state.isActive) return
+    log(`🎬 Processing turn for ${currentAi}, first: ${isFirstMessage}`)
+    
+    if (!state.isActive) {
+      log(`❌ Conversation not active, stopping turn for ${currentAi}`)
+      return
+    }
 
     try {
       await addThinkingDelay(currentAi)
       
       if (!state.isActive) {
+        log(`❌ Conversation stopped during thinking for ${currentAi}`)
         setTypingIndicator(currentAi, false)
         return
       }
 
+      log(`📞 Getting AI response for ${currentAi}`)
       const response = await getAIResponse(currentAi, message, [])
       
       // Check for #END# condition
       if (response && response.includes('#END#')) {
-        log(`AI ${currentAi} responded with #END#. Ending conversation.`)
+        log(`🔚 ${currentAi} responded with #END#. Ending conversation.`)
         setTypingIndicator(currentAi, false)
         stopConversation('Conversation has ended')
         return
@@ -228,6 +277,7 @@ function MainApp() {
       }
 
       const messageIndex = state.messages.length
+      log(`💬 Adding message from ${currentAi}, index: ${messageIndex}`)
       addMessage({
         role: 'assistant',
         content: response,
@@ -238,9 +288,13 @@ function MainApp() {
       // Speak the response
       await speakText(currentAi, response, messageIndex)
 
-      if (!state.isActive) return
+      if (!state.isActive) {
+        log(`❌ Conversation stopped after speech for ${currentAi}`)
+        return
+      }
 
       // Brief pause between turns
+      log(`⏸️ Pause between turns`)
       await new Promise(resolve => setTimeout(resolve, 800))
 
       // Determine next step
@@ -248,16 +302,18 @@ function MainApp() {
       
       if ((direction === 'human-to-ai1' && currentAi === 'ai1') ||
           (direction === 'human-to-ai2' && currentAi === 'ai2')) {
+        log(`✅ Conversation completed for direction: ${direction}`)
         stopConversation('Conversation ended')
         return
       }
 
       // Continue conversation
       const otherAi = currentAi === 'ai1' ? 'ai2' : 'ai1'
+      log(`🔄 Continuing conversation with ${otherAi}`)
       await processTurn(otherAi, response, false)
       
     } catch (error) {
-      log(`Error in processTurn for ${currentAi}: ${error}`)
+      log(`❌ Error in processTurn for ${currentAi}: ${error}`)
       setTypingIndicator(currentAi, false)
       setSpeakingState(currentAi, false)
       
@@ -277,46 +333,74 @@ function MainApp() {
   }
 
   const handleStartConversation = async (direction: ConversationDirection, message: string) => {
+    log('🚀 STARTING CONVERSATION', {
+      direction,
+      message: message.substring(0, 50) + '...',
+      ai1Model: ai1Config.model,
+      ai2Model: ai2Config.model,
+      ai1Name: ai1Config.name,
+      ai2Name: ai2Config.name
+    })
+
+    // Enhanced validation with detailed logging
     if (!ai1Config.model || !ai2Config.model) {
+      const errorMsg = `Missing models - AI1: ${ai1Config.model || 'MISSING'}, AI2: ${ai2Config.model || 'MISSING'}`
+      log(`❌ Validation failed: ${errorMsg}`)
       alert('Please select models for both AI agents in the settings.')
       return
     }
 
-    log('Starting conversation')
-    clearMessages()
-    startConversation()
-    setConversationId(generateId())
-    setHasAudio(false)
-
-    let sender: 'ai1' | 'ai2' | 'human'
-    let receiver: 'ai1' | 'ai2'
-
-    if (direction === 'human-to-ai1') {
-      sender = 'human'
-      receiver = 'ai1'
-    } else if (direction === 'human-to-ai2') {
-      sender = 'human'
-      receiver = 'ai2'
-    } else if (direction === 'ai1-to-ai2') {
-      sender = 'ai1'
-      receiver = 'ai2'
-    } else {
-      sender = 'ai2'
-      receiver = 'ai1'
+    if (!message.trim()) {
+      log(`❌ Validation failed: Empty message`)
+      alert('Please provide a starting message.')
+      return
     }
 
-    // Add initial message
-    addMessage({
-      role: sender === 'human' ? 'human' : 'assistant',
-      content: message,
-      agent: sender === 'human' ? undefined : sender,
-      model: sender === 'ai1' ? ai1Config.model : sender === 'ai2' ? ai2Config.model : undefined,
-    })
+    if (state.isActive) {
+      log(`❌ Validation failed: Conversation already active`)
+      alert('Conversation is already active.')
+      return
+    }
 
     try {
+      log('🎬 Initializing conversation')
+      clearMessages()
+      startConversation()
+      setConversationId(generateId())
+      setHasAudio(false)
+
+      let sender: 'ai1' | 'ai2' | 'human'
+      let receiver: 'ai1' | 'ai2'
+
+      if (direction === 'human-to-ai1') {
+        sender = 'human'
+        receiver = 'ai1'
+      } else if (direction === 'human-to-ai2') {
+        sender = 'human'
+        receiver = 'ai2'
+      } else if (direction === 'ai1-to-ai2') {
+        sender = 'ai1'
+        receiver = 'ai2'
+      } else {
+        sender = 'ai2'
+        receiver = 'ai1'
+      }
+
+      log(`📝 Adding initial message from ${sender} to ${receiver}`)
+
+      // Add initial message
+      addMessage({
+        role: sender === 'human' ? 'human' : 'assistant',
+        content: message,
+        agent: sender === 'human' ? undefined : sender,
+        model: sender === 'ai1' ? ai1Config.model : sender === 'ai2' ? ai2Config.model : undefined,
+      })
+
+      log(`🎯 Starting conversation flow with ${receiver}`)
       await processTurn(receiver, message, true)
+      
     } catch (error) {
-      log(`Error starting conversation: ${error}`)
+      log(`❌ Error starting conversation: ${error}`)
       addMessage({
         role: 'system',
         content: `Failed to start conversation: ${error}`,
@@ -412,8 +496,12 @@ function MainApp() {
         // Simple implementation - just play the first audio file
         // In a full implementation, you'd have a proper audio player
         const audioUrl = `/conversations/${conversationId}/audio/${data.audioFiles[0]}`
-        const audio = new Audio(audioUrl)
-        audio.play().catch(console.error)
+        
+        // Check if we're on client side before creating audio
+        if (isClientSide && typeof window !== 'undefined') {
+          const audio = new Audio(audioUrl)
+          audio.play().catch(console.error)
+        }
       } else {
         alert('No audio files available for this conversation.')
       }
@@ -421,6 +509,15 @@ function MainApp() {
       log(`Error playing audio: ${error}`)
       alert('Error loading audio files.')
     }
+  }
+
+  // Don't render until client side to avoid SSR issues
+  if (!isClientSide) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-custom-bg">
+        <div className="text-white text-lg">Loading...</div>
+      </div>
+    )
   }
 
   return (
@@ -464,7 +561,11 @@ function MainApp() {
       {/* Main Content */}
       <main className="flex-1 container mx-auto p-3 overflow-hidden">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 h-full">
-          <ConversationStarter onStartConversation={handleStartConversation} />
+          <ConversationStarter 
+            onStartConversation={handleStartConversation}
+            ai1Config={ai1Config}
+            ai2Config={ai2Config}
+          />
           <ConversationPanel
             onShare={handleShareConversation}
             onPlayAudio={handlePlayAudio}
