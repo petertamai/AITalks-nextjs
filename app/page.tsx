@@ -16,7 +16,7 @@ const DEFAULT_AI1_CONFIG: AIAgent = {
   id: 'ai1',
   name: 'AI-1',
   model: '',
-  prompt: "You are a curious and friendly AI who loves asking questions. You're having a conversation with another AI. Keep your responses brief and engaging. Ask follow-up questions. Answer short to the point.",
+  prompt: "You are a curious and friendly conversationalist who loves asking questions and exploring topics. Keep your responses brief and engaging. Ask follow-up questions naturally. Don't use names or titles when speaking - just respond naturally as if in a flowing conversation.",
   maxTokens: 1200,
   temperature: 0.5,
   tts: {
@@ -29,7 +29,7 @@ const DEFAULT_AI2_CONFIG: AIAgent = {
   id: 'ai2',
   name: 'AI-2',
   model: '',
-  prompt: "You are a knowledgeable and thoughtful AI. You're having a conversation with another AI. Respond to questions with interesting facts and insights. Keep responses concise. Answer short to the point.",
+  prompt: "You are a knowledgeable and thoughtful conversationalist. Respond to questions and topics with interesting facts and insights. Keep responses concise and natural. Don't use names or titles when speaking - just respond naturally as if in a flowing conversation.",
   maxTokens: 1200,
   temperature: 0.5,
   tts: {
@@ -98,20 +98,18 @@ function MainApp() {
     conversationHistory: any[] = []
   ) => {
     const config = aiId === 'ai1' ? ai1Config : ai2Config
-    const otherConfig = aiId === 'ai1' ? ai2Config : ai1Config
     
     log(`🤖 Getting ${aiId} response using model: ${config.model}`)
     
     const messages = [
       {
         role: 'system',
-        content: `${config.prompt} You are ${config.name} and you are talking to ${otherConfig.name}. Keep your responses concise and engaging.`
+        content: `${config.prompt} Keep the conversation natural and flowing.`
       },
       ...conversationHistory.slice(-10),
       {
         role: 'user',
-        content: prompt,
-        name: otherConfig.name
+        content: prompt
       }
     ]
 
@@ -143,14 +141,116 @@ function MainApp() {
     }
   }
 
-  // ENHANCED: Better logging and error handling for TTS
-
-
   const addThinkingDelay = async (aiId: 'ai1' | 'ai2') => {
     log(`💭 ${aiId} is thinking...`)
     setTypingIndicator(aiId, true)
     const thinkingTime = 1000 + Math.random() * 2000
     await new Promise(resolve => setTimeout(resolve, thinkingTime))
+  }
+
+  const getCurrentDirection = (): ConversationDirection => {
+    // This would normally come from state, using default for now
+    return 'ai1-to-ai2'
+  }
+
+  const speakText = async (
+    aiId: 'ai1' | 'ai2',
+    text: string,
+    messageIndex: number
+  ): Promise<void> => {
+    const config = aiId === 'ai1' ? ai1Config : ai2Config
+    
+    // Check if TTS is enabled for this AI
+    if (!config.tts.enabled) {
+      log(`🔇 TTS disabled for ${aiId}, skipping speech generation`)
+      return
+    }
+    
+    log(`🎵 Generating TTS for ${aiId}: "${text.substring(0, 50)}..."`)
+    
+    try {
+      setSpeakingState(aiId, true)
+      setHasAudio(true)
+      
+      const response = await fetch('/api/groq/tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          voice: config.tts.voice,
+          input: text,
+          conversation_id: conversationId,
+          message_index: messageIndex,
+        }),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || `TTS API error: ${response.status}`)
+      }
+      
+      // Get audio blob
+      const audioBlob = await response.blob()
+      const audioUrl = URL.createObjectURL(audioBlob)
+      
+      // Play audio if client-side
+      if (isClientSide && audioElements.current[aiId]) {
+        const audio = audioElements.current[aiId]
+        audio.src = audioUrl
+        
+        // Return promise that resolves when audio finishes
+        return new Promise((resolve, reject) => {
+          audio.onended = () => {
+            setSpeakingState(aiId, false)
+            URL.revokeObjectURL(audioUrl)
+            log(`✅ Audio playback completed for ${aiId}`)
+            resolve()
+          }
+          
+          audio.onerror = (error) => {
+            setSpeakingState(aiId, false)
+            URL.revokeObjectURL(audioUrl)
+            log(`❌ Audio playback error for ${aiId}:`, error)
+            reject(new Error(`Audio playback failed: ${error}`))
+          }
+          
+          audio.play().catch((playError) => {
+            setSpeakingState(aiId, false)
+            URL.revokeObjectURL(audioUrl)
+            log(`❌ Audio play error for ${aiId}:`, playError)
+            reject(new Error(`Failed to play audio: ${playError}`))
+          })
+        })
+      } else {
+        // Fallback: simulate speaking time if no audio element
+        const speakingTime = calculateSpeakingTime(text)
+        log(`⏱️ Simulating speaking time for ${aiId}: ${speakingTime}ms`)
+        
+        return new Promise(resolve => {
+          setTimeout(() => {
+            setSpeakingState(aiId, false)
+            URL.revokeObjectURL(audioUrl)
+            resolve()
+          }, speakingTime)
+        })
+      }
+      
+    } catch (error) {
+      log(`❌ TTS error for ${aiId}:`, error)
+      setSpeakingState(aiId, false)
+      
+      // Don't throw error - just log and continue without TTS
+      console.warn(`TTS failed for ${aiId}, continuing without speech:`, error)
+      
+      // Simulate brief pause instead of speaking
+      return new Promise(resolve => {
+        setTimeout(() => {
+          resolve()
+        }, 500)
+      })
+    }
   }
 
   // ENHANCED: Better logging for processTurn
@@ -177,7 +277,14 @@ function MainApp() {
       }
 
       log(`📞 Getting AI response for ${currentAi}`)
-      const response = await getAIResponse(currentAi, message, [])
+      
+      // Build conversation history for context
+      const conversationHistory = state.messages.map(msg => ({
+        role: msg.role === 'human' ? 'user' : 'assistant',
+        content: msg.content
+      }))
+      
+      const response = await getAIResponse(currentAi, message, conversationHistory)
       
       // Check for #END# condition
       if (response && response.includes('#END#')) {
@@ -247,11 +354,6 @@ function MainApp() {
       })
       stopConversation('Conversation stopped due to error')
     }
-  }
-
-  const getCurrentDirection = (): ConversationDirection => {
-    // This would normally come from state, using default for now
-    return 'ai1-to-ai2'
   }
 
   // ENHANCED: Better logging for handleStartConversation
