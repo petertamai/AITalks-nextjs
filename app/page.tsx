@@ -9,6 +9,7 @@ import ConversationStarter from '@/components/ConversationStarter'
 import SettingsPanel from '@/components/SettingsPanel'
 import { AIAgent, ConversationDirection, OpenRouterResponse } from '@/types'
 import { generateId, calculateSpeakingTime, debugLog } from '@/lib/utils'
+import { toast } from 'sonner'
 
 const DEFAULT_AI1_CONFIG: AIAgent = {
   id: 'ai1',
@@ -56,13 +57,13 @@ function MainApp() {
   const [showDebug, setShowDebug] = useState(false)
   const [isClientSide, setIsClientSide] = useState(false)
   
-  // FIXED: Use useRef to track conversation state to avoid closure issues
+  // Use useRef to track conversation state to avoid closure issues
   const isConversationActive = useRef(false)
   
   // Initialize audio elements only on client side to avoid SSR issues
   const audioElements = useRef<{ [key: string]: HTMLAudioElement }>({})
 
-  // FIXED: Sync ref with actual state
+  // Sync ref with actual state
   useEffect(() => {
     isConversationActive.current = state.isActive
     log(`🔄 State sync: isActive = ${state.isActive}, ref = ${isConversationActive.current}`)
@@ -73,7 +74,6 @@ function MainApp() {
     setIsClientSide(true)
     setConversationId(generateId())
     
-    // Initialize audio elements only in browser
     if (typeof window !== 'undefined') {
       audioElements.current = {
         ai1: new Audio(),
@@ -114,13 +114,6 @@ function MainApp() {
       }
     ]
 
-    log(`📤 Sending request to OpenRouter API for ${aiId}`, {
-      model: config.model,
-      messageCount: messages.length,
-      maxTokens: config.maxTokens,
-      temperature: config.temperature
-    })
-
     const response = await fetch('/api/openrouter/chat', {
       method: 'POST',
       headers: {
@@ -135,29 +128,22 @@ function MainApp() {
       }),
     })
 
-    log(`📥 OpenRouter API response: ${response.status} ${response.statusText}`)
-
     if (!response.ok) {
       const errorText = await response.text()
-      log(`❌ API Error Details: ${errorText}`)
       throw new Error(`API error: ${response.status} - ${errorText}`)
     }
 
     const data: OpenRouterResponse = await response.json()
-    log(`📊 API Response data:`, data)
     
     if (data.choices && data.choices.length > 0 && data.choices[0].message) {
-      const content = data.choices[0].message.content.trim()
-      log(`✅ Got response from ${aiId}: ${content.substring(0, 100)}...`)
-      return content
+      return data.choices[0].message.content.trim()
     } else {
-      log(`❌ Invalid response format:`, data)
       throw new Error('Invalid response format from API')
     }
   }
 
+  // FIXED: Enhanced speakText function that handles all cases
   const speakText = async (aiId: 'ai1' | 'ai2', text: string, messageIndex: number) => {
-    // Check if we're on client side and audio elements are initialized
     if (!isClientSide || !audioElements.current[aiId]) {
       log(`Audio not available for ${aiId}, skipping TTS`)
       return
@@ -247,6 +233,7 @@ function MainApp() {
     await new Promise(resolve => setTimeout(resolve, thinkingTime))
   }
 
+  // FIXED: Better processTurn that handles TTS for both agents
   const processTurn = async (
     currentAi: 'ai1' | 'ai2',
     message: string,
@@ -254,7 +241,6 @@ function MainApp() {
   ): Promise<void> => {
     log(`🎬 Processing turn for ${currentAi}, first: ${isFirstMessage}, isConversationActive: ${isConversationActive.current}`)
     
-    // FIXED: Use ref instead of state to avoid closure issues
     if (!isConversationActive.current) {
       log(`❌ Conversation not active (ref), stopping turn for ${currentAi}`)
       return
@@ -290,6 +276,8 @@ function MainApp() {
 
       const messageIndex = state.messages.length
       log(`💬 Adding message from ${currentAi}, index: ${messageIndex}`)
+      
+      // Add the AI's response message
       addMessage({
         role: 'assistant',
         content: response,
@@ -297,7 +285,7 @@ function MainApp() {
         model: currentAi === 'ai1' ? ai1Config.model : ai2Config.model,
       })
 
-      // Speak the response
+      // FIXED: Always speak the AI response if TTS is enabled
       await speakText(currentAi, response, messageIndex)
 
       if (!isConversationActive.current) {
@@ -309,7 +297,7 @@ function MainApp() {
       log(`⏸️ Pause between turns`)
       await new Promise(resolve => setTimeout(resolve, 800))
 
-      // Determine next step
+      // Determine next step based on conversation direction
       const direction = getCurrentDirection()
       
       if ((direction === 'human-to-ai1' && currentAi === 'ai1') ||
@@ -320,7 +308,7 @@ function MainApp() {
         return
       }
 
-      // Continue conversation
+      // Continue conversation with the other AI
       const otherAi = currentAi === 'ai1' ? 'ai2' : 'ai1'
       log(`🔄 Continuing conversation with ${otherAi}`)
       await processTurn(otherAi, response, false)
@@ -344,6 +332,7 @@ function MainApp() {
     return 'ai1-to-ai2'
   }
 
+  // FIXED: Enhanced handleStartConversation with proper TTS for initial message
   const handleStartConversation = async (direction: ConversationDirection, message: string) => {
     log('🚀 STARTING CONVERSATION', {
       direction,
@@ -356,23 +345,24 @@ function MainApp() {
       refActive: isConversationActive.current
     })
 
-    // Enhanced validation with detailed logging
     if (!ai1Config.model || !ai2Config.model) {
-      const errorMsg = `Missing models - AI1: ${ai1Config.model || 'MISSING'}, AI2: ${ai2Config.model || 'MISSING'}`
-      log(`❌ Validation failed: ${errorMsg}`)
-      alert('Please select models for both AI agents in the settings.')
+      toast.error('Setup Required', {
+        description: 'Please select models for both AI agents in the settings first.'
+      })
       return
     }
 
     if (!message.trim()) {
-      log(`❌ Validation failed: Empty message`)
-      alert('Please provide a starting message.')
+      toast.error('Missing Message', {
+        description: 'Please provide a starting message.'
+      })
       return
     }
 
     if (state.isActive || isConversationActive.current) {
-      log(`❌ Validation failed: Conversation already active`)
-      alert('Conversation is already active.')
+      toast.warning('Conversation Active', {
+        description: 'A conversation is already active. Stop it first.'
+      })
       return
     }
 
@@ -407,6 +397,7 @@ function MainApp() {
       log(`📝 Adding initial message from ${sender} to ${receiver}`)
 
       // Add initial message
+      const initialMessageIndex = 0
       addMessage({
         role: sender === 'human' ? 'human' : 'assistant',
         content: message,
@@ -414,9 +405,19 @@ function MainApp() {
         model: sender === 'ai1' ? ai1Config.model : sender === 'ai2' ? ai2Config.model : undefined,
       })
 
+      // FIXED: If the sender is an AI, generate TTS for the initial message
+      if (sender === 'ai1' || sender === 'ai2') {
+        log(`🎵 Generating TTS for initial message from ${sender}`)
+        await speakText(sender, message, initialMessageIndex)
+      }
+
+      toast.success('Conversation Started', {
+        description: `Starting conversation: ${sender} → ${receiver}`
+      })
+
       log(`🎯 Starting conversation flow with ${receiver}, isConversationActive.current: ${isConversationActive.current}`)
       
-      // FIXED: Start immediately since we control state with ref
+      // Start the conversation flow
       await processTurn(receiver, message, true)
       
     } catch (error) {
@@ -427,14 +428,21 @@ function MainApp() {
         content: `Failed to start conversation: ${error}`,
       })
       stopConversation('Conversation failed to start')
+      toast.error('Conversation Failed', {
+        description: `Failed to start conversation: ${error}`
+      })
     }
   }
 
   const handleShareConversation = async () => {
     if (state.messages.length === 0) {
-      alert('No conversation to share')
+      toast.error('Nothing to Share', {
+        description: 'No conversation to share. Start a conversation first.'
+      })
       return
     }
+
+    const loadingToast = toast.loading('Sharing conversation...')
 
     try {
       const conversationData = {
@@ -486,25 +494,45 @@ function MainApp() {
       const data = await response.json()
 
       if (data.success) {
-        // Show share URL
         const shareUrl = data.shareUrl
         
-        // Create a simple dialog to show the share URL
-        const result = prompt(
-          `Conversation shared successfully!\n\nShare this link:\n${shareUrl}\n\nLink expires in 30 days.\n\nPress OK to copy to clipboard, or Cancel to close.`
-        )
+        toast.dismiss(loadingToast)
         
-        if (result !== null) {
-          navigator.clipboard.writeText(shareUrl).catch(() => {
-            alert('Could not copy to clipboard. Please copy the URL manually.')
-          })
-        }
+        toast.success('Conversation Shared Successfully!', {
+          description: 'Link expires in 30 days',
+          action: {
+            label: 'Copy Link',
+            onClick: () => {
+              navigator.clipboard.writeText(shareUrl).then(() => {
+                toast.success('Link copied to clipboard!')
+              }).catch(() => {
+                toast.error('Failed to copy link')
+              })
+            }
+          },
+          duration: 10000,
+        })
+
+        toast.info('Share Link', {
+          description: shareUrl,
+          action: {
+            label: 'Open',
+            onClick: () => window.open(shareUrl, '_blank')
+          },
+          duration: 15000,
+        })
+        
       } else {
-        alert(`Failed to share conversation: ${data.error || 'Unknown error'}`)
+        toast.dismiss(loadingToast)
+        toast.error('Share Failed', {
+          description: data.error || 'Unknown error occurred while sharing.'
+        })
       }
     } catch (error) {
-      log(`Error sharing conversation: ${error}`)
-      alert('An unexpected error occurred while sharing the conversation.')
+      toast.dismiss(loadingToast)
+      toast.error('Share Error', {
+        description: 'An unexpected error occurred while sharing the conversation.'
+      })
     }
   }
 
@@ -514,29 +542,33 @@ function MainApp() {
       const data = await response.json()
       
       if (data.success && data.audioFiles && data.audioFiles.length > 0) {
-        // Simple implementation - just play the first audio file
-        // In a full implementation, you'd have a proper audio player
+        toast.success('Playing Audio', {
+          description: `Found ${data.audioFiles.length} audio files`
+        })
+        
+        // TODO: Implement proper sequential audio playback with highlighting
         const audioUrl = `/conversations/${conversationId}/audio/${data.audioFiles[0]}`
         
-        // Check if we're on client side before creating audio
         if (isClientSide && typeof window !== 'undefined') {
           const audio = new Audio(audioUrl)
           audio.play().catch(console.error)
         }
       } else {
-        alert('No audio files available for this conversation.')
+        toast.warning('No Audio Available', {
+          description: 'No audio files available for this conversation.'
+        })
       }
     } catch (error) {
-      log(`Error playing audio: ${error}`)
-      alert('Error loading audio files.')
+      toast.error('Audio Error', {
+        description: 'Error loading audio files.'
+      })
     }
   }
 
-  // Don't render until client side to avoid SSR issues
   if (!isClientSide) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-custom-bg">
-        <div className="text-white text-lg">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-lg">Loading...</div>
       </div>
     )
   }
@@ -544,27 +576,25 @@ function MainApp() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="bg-gray-800 shadow p-3">
-        <div className="container mx-auto flex justify-between items-center">
-          <h1 className="text-xl md:text-2xl font-bold text-white">AI Conversation System</h1>
+      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
+        <div className="container mx-auto flex justify-between items-center p-4">
+          <h1 className="text-2xl font-bold">AI Conversation System</h1>
           <div className="flex space-x-2">
             <Button
-              variant="secondary"
+              variant="outline"
               size="sm"
               onClick={() => setIsSettingsOpen(true)}
-              className="bg-gray-600 hover:bg-gray-500"
             >
-              <Settings className="h-5 w-5 mr-1" />
-              <span className="hidden md:inline">Settings</span>
+              <Settings className="h-4 w-4 mr-1" />
+              Settings
             </Button>
             <Button
-              variant="secondary"
+              variant="outline"
               size="sm"
               onClick={() => setShowDebug(!showDebug)}
-              className="bg-gray-600 hover:bg-gray-500"
             >
-              <Bug className="h-5 w-5 mr-1" />
-              <span className="hidden md:inline">Debug</span>
+              <Bug className="h-4 w-4 mr-1" />
+              Debug
             </Button>
           </div>
         </div>
@@ -572,7 +602,7 @@ function MainApp() {
 
       {/* Debug Panel */}
       {showDebug && (
-        <div className="bg-black text-green-400 p-2 text-xs font-mono max-h-48 overflow-y-auto">
+        <div className="bg-muted p-4 text-sm font-mono max-h-48 overflow-y-auto">
           {debugLogs.map((log, index) => (
             <div key={index}>{log}</div>
           ))}
@@ -580,8 +610,8 @@ function MainApp() {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 container mx-auto p-3 overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 h-full">
+      <main className="flex-1 container mx-auto p-4 overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
           <ConversationStarter 
             onStartConversation={handleStartConversation}
             ai1Config={ai1Config}
@@ -596,8 +626,8 @@ function MainApp() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-gray-800 py-2 px-3">
-        <div className="container mx-auto text-center text-sm opacity-75">
+      <footer className="border-t py-4">
+        <div className="container mx-auto text-center text-sm text-muted-foreground">
           <p>&copy; {new Date().getFullYear()} Piotr Tamulewicz | <a href="https://petertam.pro/" className="underline">petertam.pro</a></p>
         </div>
       </footer>

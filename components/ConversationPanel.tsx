@@ -43,11 +43,11 @@ export default function ConversationPanel({
     return 'Idle'
   }
 
-  const getStatusColor = () => {
-    if (state.speakingState.ai1 || state.speakingState.ai2) return 'bg-green-600'
-    if (state.typingIndicator.ai1 || state.typingIndicator.ai2) return 'bg-yellow-600'
-    if (state.isActive) return 'bg-blue-600'
-    return 'bg-gray-600'
+  const getStatusVariant = () => {
+    if (state.speakingState.ai1 || state.speakingState.ai2) return 'default'
+    if (state.typingIndicator.ai1 || state.typingIndicator.ai2) return 'secondary'
+    if (state.isActive) return 'default'
+    return 'outline'
   }
 
   const renderMessage = (message: ConversationMessage, index: number) => {
@@ -77,7 +77,7 @@ export default function ConversationPanel({
         data-index={index}
       >
         <div className="agent-name">{agentName}</div>
-        <div className="message-text">{message.content}</div>
+        <div className="text-sm leading-relaxed">{message.content}</div>
         {message.model && (
           <div className="model-badge">{message.model}</div>
         )}
@@ -86,10 +86,10 @@ export default function ConversationPanel({
   }
 
   return (
-    <Card className="flex flex-col h-full bg-gray-700 border-gray-600">
-      <CardHeader className="pb-2">
+    <Card className="flex flex-col h-full">
+      <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-xl font-bold text-white">
+          <CardTitle className="text-xl font-semibold">
             {isSharedView ? 'Shared Conversation' : 'Conversation'}
           </CardTitle>
           <div className="flex items-center gap-2">
@@ -98,9 +98,8 @@ export default function ConversationPanel({
                 {!state.isActive && state.messages.length > 0 && onShare && (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     onClick={onShare}
-                    className="bg-gray-600 hover:bg-gray-500"
                   >
                     <Share2 className="h-4 w-4 mr-1" />
                     Share
@@ -109,9 +108,8 @@ export default function ConversationPanel({
                 {hasAudio && onPlayAudio && (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     onClick={onPlayAudio}
-                    className="bg-gray-600 hover:bg-gray-500"
                   >
                     <Play className="h-4 w-4 mr-1" />
                     Play
@@ -122,37 +120,54 @@ export default function ConversationPanel({
             {isSharedView && hasAudio && onPlayAudio && (
               <Button
                 size="sm"
-                variant="secondary"
+                variant="outline"
                 onClick={onPlayAudio}
-                className="bg-gray-600 hover:bg-gray-500"
               >
                 <Play className="h-4 w-4 mr-1" />
                 Play
               </Button>
             )}
-            <Badge className={`text-xs px-2 py-1 ${getStatusColor()}`}>
+            <Badge variant={getStatusVariant()}>
               {getStatusText()}
             </Badge>
           </div>
         </div>
       </CardHeader>
-      <CardContent className="flex-1 overflow-hidden p-3">
-        <div className="h-full bg-gray-800 rounded-lg p-3 overflow-y-auto custom-scrollbar flex flex-col">
-          {state.messages.map(renderMessage)}
-          
-          {/* Typing Indicators */}
-          {state.typingIndicator.ai1 && (
-            <div className="self-start">
-              <TypingIndicator />
+      <CardContent className="flex-1 overflow-hidden">
+        <div className="h-full bg-muted/30 rounded-lg p-4 overflow-y-auto custom-scrollbar flex flex-col">
+          {state.messages.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <h3 className="text-lg font-medium text-muted-foreground mb-2">
+                  No conversation yet
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {isSharedView 
+                    ? "This shared conversation appears to be empty."
+                    : "Start a conversation to see messages appear here."
+                  }
+                </p>
+              </div>
             </div>
+          ) : (
+            <>
+              {state.messages.map(renderMessage)}
+              
+              {/* Typing Indicators */}
+              {state.typingIndicator.ai1 && (
+                <div className="self-start">
+                  <TypingIndicator />
+                </div>
+              )}
+              {state.typingIndicator.ai2 && (
+                <div className="self-end">
+                  <TypingIndicator />
+                </div>
+              )}
+              
+              <div ref={messagesEndRef} />
+            </>
           )}
-          {state.typingIndicator.ai2 && (
-            <div className="self-end">
-              <TypingIndicator />
-            </div>
-          )}
-          
-          <div ref={messagesEndRef} />
         </div>
       </CardContent>
     </Card>

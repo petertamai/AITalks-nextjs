@@ -29,49 +29,24 @@ export default function ConversationStarter({
   const [isStarting, setIsStarting] = useState(false)
 
   const handleStart = async () => {
-    console.log('🚀 Start Conversation clicked!')
-    console.log('📋 Current config:', {
-      ai1Model: ai1Config?.model || 'Not provided',
-      ai2Model: ai2Config?.model || 'Not provided',
-      direction,
-      messageLength: startingMessage.trim().length,
-      isActive: state.isActive
-    })
-
-    // Validation with detailed logging
     if (!startingMessage.trim()) {
-      console.log('❌ Validation failed: Empty message')
       alert('Please provide a starting message.')
       return
     }
 
-    // Check if models are provided (but don't block if not - let main component handle)
     if (!ai1Config?.model || !ai2Config?.model) {
-      console.log('⚠️ Models not configured:', {
-        ai1: ai1Config?.model || 'Missing',
-        ai2: ai2Config?.model || 'Missing'
-      })
       alert('Please select models for both AI agents in the settings first.')
       return
     }
 
     if (state.isActive) {
-      console.log('⚠️ Conversation already active')
       alert('Conversation is already active. Stop it first.')
       return
     }
 
     try {
       setIsStarting(true)
-      console.log('🎬 Starting conversation with:', {
-        direction,
-        message: startingMessage.substring(0, 50) + '...',
-        ai1: ai1Config.name,
-        ai2: ai2Config.name
-      })
-
       await onStartConversation(direction, startingMessage.trim())
-      console.log('✅ Conversation start request completed')
     } catch (error) {
       console.error('❌ Error starting conversation:', error)
       alert(`Failed to start conversation: ${error}`)
@@ -81,7 +56,6 @@ export default function ConversationStarter({
   }
 
   const handleStop = () => {
-    console.log('🛑 Stop Conversation clicked!')
     stopConversation('Conversation stopped by user')
   }
 
@@ -105,97 +79,96 @@ export default function ConversationStarter({
   const canStart = !validationMessage && !state.isActive && !isStarting
 
   return (
-    <Card className="bg-gray-700 border-gray-600">
+    <Card>
       <CardHeader>
-        <CardTitle className="text-xl font-bold text-white">Conversation Starter</CardTitle>
+        <CardTitle>Conversation Starter</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-6">
         {/* Validation Warning */}
         {validationMessage && (
-          <div className="flex items-center gap-2 p-3 bg-yellow-900/50 border border-yellow-600 rounded-lg">
-            <AlertCircle className="h-5 w-5 text-yellow-400 flex-shrink-0" />
-            <span className="text-yellow-200 text-sm">{validationMessage}</span>
+          <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
+            <AlertCircle className="h-4 w-4 text-destructive" />
+            <span className="text-sm text-destructive">{validationMessage}</span>
           </div>
         )}
 
-        {/* Current Configuration Display */}
-        <div className="grid grid-cols-2 gap-3 p-3 bg-gray-800 rounded-lg">
-          <div>
-            <label className="text-xs text-gray-400">AI-1 Model</label>
-            <div className="text-sm text-white font-mono truncate">
-              {ai1Config?.model || 'Not selected'}
-            </div>
-            <div className="text-xs text-gray-400">
-              {ai1Config?.name || 'AI-1'}
+        {/* Current Configuration */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">AI Agent 1</Label>
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <div className="text-sm font-mono truncate">
+                {ai1Config?.model || 'Not selected'}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {ai1Config?.name || 'AI-1'}
+              </div>
             </div>
           </div>
-          <div>
-            <label className="text-xs text-gray-400">AI-2 Model</label>
-            <div className="text-sm text-white font-mono truncate">
-              {ai2Config?.model || 'Not selected'}
-            </div>
-            <div className="text-xs text-gray-400">
-              {ai2Config?.name || 'AI-2'}
+          
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">AI Agent 2</Label>
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <div className="text-sm font-mono truncate">
+                {ai2Config?.model || 'Not selected'}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {ai2Config?.name || 'AI-2'}
+              </div>
             </div>
           </div>
         </div>
 
-        <div>
-          <Label className="text-sm font-medium text-white mb-2 block">Message Direction</Label>
+        {/* Message Direction */}
+        <div className="space-y-3">
+          <Label className="text-sm font-medium">Message Direction</Label>
           <RadioGroup
             value={direction}
-            onValueChange={(value) => {
-              console.log('📍 Direction changed to:', value)
-              setDirection(value as ConversationDirection)
-            }}
+            onValueChange={(value) => setDirection(value as ConversationDirection)}
             className="flex flex-wrap gap-4"
             disabled={state.isActive || isStarting}
           >
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="human-to-ai1" id="human-to-ai1" />
-              <Label htmlFor="human-to-ai1" className="text-sm text-white">Human → AI-1</Label>
+              <Label htmlFor="human-to-ai1" className="text-sm">Human → AI-1</Label>
             </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="ai1-to-ai2" id="ai1-to-ai2" />
-              <Label htmlFor="ai1-to-ai2" className="text-sm text-white">AI-1 → AI-2</Label>
+              <Label htmlFor="ai1-to-ai2" className="text-sm">AI-1 → AI-2</Label>
             </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="human-to-ai2" id="human-to-ai2" />
-              <Label htmlFor="human-to-ai2" className="text-sm text-white">Human → AI-2</Label>
+              <Label htmlFor="human-to-ai2" className="text-sm">Human → AI-2</Label>
             </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="ai2-to-ai1" id="ai2-to-ai1" />
-              <Label htmlFor="ai2-to-ai1" className="text-sm text-white">AI-2 → AI-1</Label>
+              <Label htmlFor="ai2-to-ai1" className="text-sm">AI-2 → AI-1</Label>
             </div>
           </RadioGroup>
         </div>
 
-        <div>
-          <Label className="text-sm font-medium text-white mb-2 block">Starting Message</Label>
+        {/* Starting Message */}
+        <div className="space-y-2">
+          <Label htmlFor="message" className="text-sm font-medium">Starting Message</Label>
           <Textarea
+            id="message"
             value={startingMessage}
-            onChange={(e) => {
-              console.log('📝 Message changed, length:', e.target.value.length)
-              setStartingMessage(e.target.value)
-            }}
+            onChange={(e) => setStartingMessage(e.target.value)}
             placeholder="Enter the message that will start the conversation..."
-            className="bg-gray-800 border-gray-600 text-white h-24 lg:h-48"
+            className="min-h-[100px]"
             disabled={state.isActive || isStarting}
           />
-          <div className="text-xs text-gray-400 mt-1">
+          <div className="text-xs text-muted-foreground">
             {startingMessage.length} characters
           </div>
         </div>
 
+        {/* Action Buttons */}
         <div className="flex justify-between">
           <Button
             onClick={handleStart}
             disabled={!canStart}
-            className={`font-bold ${
-              canStart 
-                ? 'bg-custom-btn hover:bg-blue-600' 
-                : 'bg-gray-600 cursor-not-allowed'
-            }`}
+            className="font-medium"
           >
             {isStarting ? (
               <>
@@ -213,7 +186,6 @@ export default function ConversationStarter({
             onClick={handleStop}
             disabled={!state.isActive}
             variant="destructive"
-            className="font-bold"
           >
             <Square className="h-4 w-4 mr-2" />
             Stop Conversation
@@ -221,9 +193,9 @@ export default function ConversationStarter({
         </div>
 
         {/* Debug Info */}
-        <details className="text-xs text-gray-400">
-          <summary className="cursor-pointer hover:text-white">Debug Info</summary>
-          <pre className="mt-2 p-2 bg-black rounded text-green-400 overflow-auto">
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer hover:text-foreground">Debug Info</summary>
+          <pre className="mt-2 p-2 bg-muted rounded text-xs overflow-auto">
 {JSON.stringify({
   isActive: state.isActive,
   isStarting,

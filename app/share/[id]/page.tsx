@@ -1,265 +1,114 @@
-'use client'
+import { notFound } from 'next/navigation'
+import { readFile } from 'fs/promises'
+import { existsSync } from 'fs'
+import path from 'path'
+import { ConversationData } from '@/types'
+import SharedConversationView from './SharedConversationView'
 
-import React, { useState, useRef } from 'react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Play, Square } from 'lucide-react'
-import { ConversationData, ConversationMessage } from '@/types'
-
-interface SharedConversationViewProps {
-  conversationData: ConversationData
-  conversationId: string
-  hasAudio: boolean
+interface SharePageProps {
+  params: Promise<{ id: string }>
 }
 
-export default function SharedConversationView({
-  conversationData,
-  conversationId,
-  hasAudio,
-}: SharedConversationViewProps) {
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [currentAudioIndex, setCurrentAudioIndex] = useState(0)
-  const [audioFiles, setAudioFiles] = useState<string[]>([])
-  const audioPlayerRef = useRef<HTMLAudioElement>(null)
+async function getSharedConversation(id: string) {
+  try {
+    // Clean the conversation ID
+    const cleanId = id.replace(/[^a-zA-Z0-9_]/g, '')
+    
+    if (cleanId !== id) {
+      return null
+    }
 
-  const loadAudioFiles = async () => {
-    try {
-      const response = await fetch(`/api/conversations/audio?conversation_id=${conversationId}`)
-      const data = await response.json()
+    // Check if conversation exists
+    const conversationPath = path.join(process.cwd(), 'public', 'conversations', id, 'conversation.json')
+    
+    if (!existsSync(conversationPath)) {
+      return null
+    }
+
+    // Read conversation data
+    const fileContent = await readFile(conversationPath, 'utf-8')
+    const conversationData: ConversationData = JSON.parse(fileContent)
+
+    // Check if conversation is shared and not expired
+    if (!conversationData.shared) {
+      return null
+    }
+
+    // Check expiry (if shared_at exists, it expires in 30 days)
+    if (conversationData.shared_at) {
+      const sharedDate = new Date(conversationData.shared_at)
+      const expiryDate = new Date(sharedDate.getTime() + 30 * 24 * 60 * 60 * 1000) // 30 days
       
-      if (data.success && data.audioFiles && data.audioFiles.length > 0) {
-        setAudioFiles(data.audioFiles)
-        return true
-      }
-      return false
-    } catch (error) {
-      console.error('Error loading audio files:', error)
-      return false
-    }
-  }
-
-  const highlightMessage = (audioFile: string) => {
-    // Remove previous highlights
-    document.querySelectorAll('.highlighted').forEach(el => {
-      el.classList.remove('highlighted')
-    })
-
-    // Extract index from filename
-    const indexMatch = audioFile.match(/_(\d+)/)
-    if (indexMatch && indexMatch[1]) {
-      const messageIndex = parseInt(indexMatch[1])
-      const messageElement = document.querySelector(`[data-index="${messageIndex}"]`)
-      if (messageElement) {
-        messageElement.classList.add('highlighted')
-        messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      if (new Date() > expiryDate) {
+        return null
       }
     }
-  }
 
-  const playCurrentAudio = () => {
-    if (currentAudioIndex < audioFiles.length && audioPlayerRef.current) {
-      const audioFile = audioFiles[currentAudioIndex]
-      const audioUrl = `/conversations/${conversationId}/audio/${audioFile}`
-      
-      audioPlayerRef.current.src = audioUrl
-      audioPlayerRef.current.onended = playNextAudio
-      audioPlayerRef.current.onerror = playNextAudio
-      
-      audioPlayerRef.current.play().catch(playNextAudio)
-      highlightMessage(audioFile)
-    } else {
-      resetPlayState()
-    }
-  }
-
-  const playNextAudio = () => {
-    setCurrentAudioIndex(prev => {
-      const nextIndex = prev + 1
-      if (nextIndex < audioFiles.length) {
-        return nextIndex
-      } else {
-        resetPlayState()
-        return 0
+    // Check for audio files
+    const audioPath = path.join(process.cwd(), 'public', 'conversations', id, 'audio')
+    let hasAudio = false
+    
+    if (existsSync(audioPath)) {
+      try {
+        const { readdir } = await import('fs/promises')
+        const files = await readdir(audioPath)
+        const audioFiles = files.filter(file => file.endsWith('.mp3'))
+        hasAudio = audioFiles.length > 0
+      } catch {
+        hasAudio = false
       }
-    })
-  }
-
-  const resetPlayState = () => {
-    setIsPlaying(false)
-    setCurrentAudioIndex(0)
-    document.querySelectorAll('.highlighted').forEach(el => {
-      el.classList.remove('highlighted')
-    })
-  }
-
-  const handlePlayToggle = async () => {
-    if (isPlaying) {
-      // Stop playing
-      if (audioPlayerRef.current) {
-        audioPlayerRef.current.pause()
-        audioPlayerRef.current.currentTime = 0
-      }
-      resetPlayState()
-    } else {
-      // Start playing
-      if (audioFiles.length === 0) {
-        const hasAudioFiles = await loadAudioFiles()
-        if (!hasAudioFiles) {
-          alert('No audio files available for this conversation.')
-          return
-        }
-      }
-      
-      setIsPlaying(true)
-      setCurrentAudioIndex(0)
-      playCurrentAudio()
-    }
-  }
-
-  // Update current audio when index changes
-  React.useEffect(() => {
-    if (isPlaying && audioFiles.length > 0) {
-      playCurrentAudio()
-    }
-  }, [currentAudioIndex, isPlaying])
-
-  const renderMessage = (message: ConversationMessage, index: number) => {
-    let messageClass = 'chat-message'
-    let agentName = 'Human'
-
-    if (message.agent === 'ai1') {
-      messageClass += ' ai1'
-      agentName = conversationData.settings?.names?.ai1 || 'AI-1'
-    } else if (message.agent === 'ai2') {
-      messageClass += ' ai2'
-      agentName = conversationData.settings?.names?.ai2 || 'AI-2'
-    } else if (message.role === 'system') {
-      messageClass += ' system'
-      agentName = 'System'
-    } else {
-      messageClass += ' human'
     }
 
-    return (
-      <div
-        key={message.id}
-        className={messageClass}
-        data-index={index}
-      >
-        <div className="agent-name">{agentName}</div>
-        <div className="message-text">{message.content}</div>
-        {message.model && (
-          <div className="model-badge">{message.model}</div>
-        )}
-      </div>
-    )
+    return {
+      conversationData,
+      hasAudio
+    }
+  } catch (error) {
+    console.error('Error loading shared conversation:', error)
+    return null
   }
+}
+
+export default async function SharePage({ params }: SharePageProps) {
+  const { id } = await params
+  const result = await getSharedConversation(id)
+
+  if (!result) {
+    notFound()
+  }
+
+  const { conversationData, hasAudio } = result
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {/* Sidebar with conversation settings */}
-      <div className="md:col-span-1">
-        <Card className="bg-gray-700 border-gray-600">
-          <CardHeader>
-            <CardTitle className="text-xl font-bold text-white">Conversation Settings</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-white">
-            {conversationData.settings && (
-              <>
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">Message Direction</h3>
-                  <p className="text-sm opacity-80">
-                    {conversationData.settings.messageDirection || 'N/A'}
-                  </p>
-                </div>
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
+        <div className="container mx-auto flex justify-between items-center p-4">
+          <div>
+            <h1 className="text-2xl font-bold">AI Conversation System</h1>
+            <p className="text-sm text-muted-foreground">Shared Conversation</p>
+          </div>
+          <div className="text-sm text-muted-foreground">
+            Shared on {conversationData.shared_at ? new Date(conversationData.shared_at).toLocaleDateString() : 'Unknown'}
+          </div>
+        </div>
+      </header>
 
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">Models</h3>
-                  <div className="text-sm opacity-80 space-y-1">
-                    {conversationData.settings.models && Object.entries(conversationData.settings.models).map(([key, value]) => (
-                      <div key={key}>
-                        <strong>{key}:</strong> {value}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+      {/* Main Content */}
+      <main className="container mx-auto p-4">
+        <SharedConversationView
+          conversationData={conversationData}
+          conversationId={id}
+          hasAudio={hasAudio}
+        />
+      </main>
 
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">Agent Names</h3>
-                  <div className="text-sm opacity-80 space-y-1">
-                    {conversationData.settings.names && Object.entries(conversationData.settings.names).map(([key, value]) => (
-                      <div key={key}>
-                        <strong>{key}:</strong> {value}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">System Prompts</h3>
-                  {conversationData.settings.prompts && Object.entries(conversationData.settings.prompts).map(([key, value]) => (
-                    <div key={key} className="mb-2">
-                      <p className="font-medium text-sm">{key}:</p>
-                      <div className="bg-gray-800 p-2 rounded text-xs max-h-20 overflow-auto">
-                        {value}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Main conversation content */}
-      <div className="md:col-span-2">
-        <Card className="bg-gray-700 border-gray-600">
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle className="text-xl font-bold text-white">Shared Conversation</CardTitle>
-              <div className="flex items-center gap-2">
-                {hasAudio && (
-                  <Button
-                    onClick={handlePlayToggle}
-                    variant="secondary"
-                    size="sm"
-                    className="bg-gray-600 hover:bg-gray-500"
-                  >
-                    {isPlaying ? (
-                      <>
-                        <Square className="h-4 w-4 mr-1" />
-                        Stop
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-4 w-4 mr-1" />
-                        Play
-                      </>
-                    )}
-                  </Button>
-                )}
-                <Badge className="bg-gray-600">Viewing</Badge>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="bg-gray-800 rounded-lg p-3 max-h-[70vh] overflow-y-auto custom-scrollbar flex flex-col space-y-2">
-              {conversationData.messages && conversationData.messages.length > 0 ? (
-                conversationData.messages.map(renderMessage)
-              ) : (
-                <div className="text-center text-gray-400 py-8">
-                  No messages found in this conversation.
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Hidden audio player */}
-      <audio ref={audioPlayerRef} className="hidden" />
+      {/* Footer */}
+      <footer className="border-t py-4 mt-8">
+        <div className="container mx-auto text-center text-sm text-muted-foreground">
+          <p>&copy; {new Date().getFullYear()} Piotr Tamulewicz | <a href="https://petertam.pro/" className="underline">petertam.pro</a></p>
+        </div>
+      </footer>
     </div>
   )
 }
