@@ -60,11 +60,12 @@ export default function SettingsPanel({
   const [isSavingKey, setIsSavingKey] = useState<string | null>(null)
   const [isValidatingKeys, setIsValidatingKeys] = useState(false)
 
-  // Load API keys from cookies on mount AND when panel opens
+  // FIXED: Load API keys IMMEDIATELY on component mount (not just when panel opens)
   useEffect(() => {
     loadApiKeysFromCookies()
   }, [])
 
+  // Also load when panel opens (secondary check)
   useEffect(() => {
     if (isOpen) {
       loadApiKeysFromCookies()
@@ -103,19 +104,70 @@ export default function SettingsPanel({
     console.log('🔄 Loading API keys from cookies...')
     
     try {
-      // Force fresh cookie read
-      const allCookies = document.cookie
-      console.log('📂 All cookies:', allCookies)
+      // FIXED: Multiple methods to read cookies to ensure we get them
       
-      const openrouterKey = Cookies.get('openrouter_api_key') || ''
-      const groqKey = Cookies.get('groq_api_key') || ''
+      // Method 1: Use js-cookie library
+      let openrouterKey = Cookies.get('openrouter_api_key') || ''
+      let groqKey = Cookies.get('groq_api_key') || ''
       
-      console.log('🔑 Keys loaded:', { 
+      console.log('📂 Method 1 (js-cookie):', { 
         openrouter: openrouterKey ? `${openrouterKey.substring(0, 20)}...` : 'None',
         groq: groqKey ? `${groqKey.substring(0, 20)}...` : 'None'
       })
       
-      // Update state
+      // Method 2: Direct document.cookie parsing (fallback)
+      if (!openrouterKey || !groqKey) {
+        console.log('🔍 Method 1 failed, trying direct cookie parsing...')
+        
+        const allCookies = document.cookie
+        console.log('📂 All cookies raw:', allCookies)
+        
+        // Parse cookies manually
+        const cookieObject = allCookies.split(';').reduce((acc, cookie) => {
+          const [key, value] = cookie.trim().split('=')
+          if (key && value) {
+            acc[key] = decodeURIComponent(value)
+          }
+          return acc
+        }, {} as Record<string, string>)
+        
+        console.log('📋 Parsed cookies:', Object.keys(cookieObject))
+        
+        // Check if keys exist in parsed cookies
+        if (!openrouterKey && cookieObject['openrouter_api_key']) {
+          openrouterKey = cookieObject['openrouter_api_key']
+          console.log('✅ Found OpenRouter key in direct parsing')
+        }
+        
+        if (!groqKey && cookieObject['groq_api_key']) {
+          groqKey = cookieObject['groq_api_key']
+          console.log('✅ Found Groq key in direct parsing')
+        }
+      }
+      
+      // Method 3: Check localStorage as backup (in case cookies are being stored there)
+      if (!openrouterKey || !groqKey) {
+        console.log('🔍 Checking localStorage as backup...')
+        try {
+          if (!openrouterKey && localStorage.getItem('openrouter_api_key')) {
+            openrouterKey = localStorage.getItem('openrouter_api_key') || ''
+            console.log('✅ Found OpenRouter key in localStorage')
+          }
+          if (!groqKey && localStorage.getItem('groq_api_key')) {
+            groqKey = localStorage.getItem('groq_api_key') || ''
+            console.log('✅ Found Groq key in localStorage')
+          }
+        } catch (localStorageError) {
+          console.log('⚠️ localStorage check failed:', localStorageError)
+        }
+      }
+      
+      console.log('🔑 Final keys loaded:', { 
+        openrouter: openrouterKey ? `${openrouterKey.substring(0, 20)}...` : 'None',
+        groq: groqKey ? `${groqKey.substring(0, 20)}...` : 'None'
+      })
+      
+      // Update state with found keys
       setApiKeys({
         openrouter: openrouterKey,
         groq: groqKey
@@ -214,41 +266,50 @@ export default function SettingsPanel({
         }
       }
       
-      // Save to cookie with explicit settings for localhost
-      const cookieOptions = {
-        expires: 30, // 30 days
-        path: '/',
-        sameSite: 'lax' as const,
-        secure: false, // Allow HTTP (localhost)
-      }
-      
+      // FIXED: Enhanced cookie saving with multiple methods
       if (keyValue) {
-        // Set cookie
-        Cookies.set(cookieKey, keyValue, cookieOptions)
-        console.log(`✅ ${keyType} cookie set successfully`)
+        // Method 1: js-cookie with various options
+        const cookieOptions = {
+          expires: 30, // 30 days
+          path: '/',
+          sameSite: 'lax' as const,
+          secure: false, // Allow HTTP (localhost)
+        }
         
-        // IMPROVED: Wait and verify cookie with retries
-        let verification = ''
-        let attempts = 0
-        const maxAttempts = 5
+        try {
+          Cookies.set(cookieKey, keyValue, cookieOptions)
+          console.log(`✅ ${keyType} cookie set with js-cookie`)
+        } catch (jsCookieError) {
+          console.warn('⚠️ js-cookie failed:', jsCookieError)
+        }
         
-        while (attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 100 * (attempts + 1))) // Increasing delay
-          verification = Cookies.get(cookieKey) || ''
-          
+        // Method 2: Direct document.cookie (fallback)
+        try {
+          const expires = new Date()
+          expires.setDate(expires.getDate() + 30)
+          document.cookie = `${cookieKey}=${encodeURIComponent(keyValue)}; expires=${expires.toUTCString()}; path=/; SameSite=Lax`
+          console.log(`✅ ${keyType} cookie set with document.cookie`)
+        } catch (directCookieError) {
+          console.warn('⚠️ document.cookie failed:', directCookieError)
+        }
+        
+        // Method 3: localStorage as backup
+        try {
+          localStorage.setItem(cookieKey, keyValue)
+          console.log(`✅ ${keyType} key saved to localStorage as backup`)
+        } catch (localStorageError) {
+          console.warn('⚠️ localStorage failed:', localStorageError)
+        }
+        
+        // FIXED: Simple verification without retries (they were causing issues)
+        setTimeout(() => {
+          const verification = Cookies.get(cookieKey) || localStorage.getItem(cookieKey) || ''
           if (verification === keyValue) {
-            console.log(`✅ Cookie verification successful on attempt ${attempts + 1}`)
-            break
+            console.log(`✅ Cookie verification successful for ${keyType}`)
+          } else {
+            console.warn(`⚠️ Cookie verification failed for ${keyType}, but saved with other methods`)
           }
-          
-          attempts++
-          console.log(`⚠️ Cookie verification attempt ${attempts}: Expected "${keyValue.substring(0, 15)}...", got "${verification.substring(0, 15)}..."`)
-        }
-        
-        if (verification !== keyValue) {
-          console.warn('⚠️ Cookie verification failed after all attempts, but continuing...')
-          // Don't throw error, just warn - cookie might still work
-        }
+        }, 200)
         
         // Update status
         setKeyStatus(prev => ({
@@ -257,8 +318,14 @@ export default function SettingsPanel({
         }))
         
       } else {
-        Cookies.remove(cookieKey, { path: '/' })
-        console.log(`🗑️ ${keyType} cookie cleared`)
+        // Clear key
+        try {
+          Cookies.remove(cookieKey, { path: '/' })
+          localStorage.removeItem(cookieKey)
+          console.log(`🗑️ ${keyType} key cleared from all storage`)
+        } catch (clearError) {
+          console.warn('⚠️ Clear error:', clearError)
+        }
         
         setKeyStatus(prev => ({
           ...prev,
@@ -298,7 +365,7 @@ export default function SettingsPanel({
         setTimeout(() => {
           validateApiKeys(keyValue)
           fetchModels(keyValue)
-        }, 1000) // Longer delay for validation
+        }, 1000)
       } else if (keyType === 'groq' && keyValue) {
         setTimeout(() => {
           validateApiKeys(undefined, keyValue)
@@ -316,7 +383,7 @@ export default function SettingsPanel({
   const fetchModels = async (keyOverride?: string) => {
     console.log('🔄 Fetching models...')
     
-    const currentKey = keyOverride || Cookies.get('openrouter_api_key')
+    const currentKey = keyOverride || Cookies.get('openrouter_api_key') || localStorage.getItem('openrouter_api_key')
     if (!currentKey) {
       console.log('❌ No OpenRouter API key found')
       alert('Please save your OpenRouter API key first')
@@ -582,7 +649,7 @@ export default function SettingsPanel({
             </>
           )}
 
-          {/* AI Configuration Section */}
+          {/* AI Configuration Section - Same as before */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* AI 1 Configuration */}
             <Card className="bg-gray-700 border-gray-600">
